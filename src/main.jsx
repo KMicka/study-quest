@@ -51,6 +51,19 @@ const types = ['math', 'reading', 'words'];
 const labels = { math: 'Math', reading: 'Reading', words: 'Words' };
 const icons = { math: '✦', reading: '◈', words: '✿' };
 const starterHero = { name: 'Nova', color: 'violet', xp: 0, attempts: 0, wins: 0, skills: { math: 0, reading: 0, words: 0 } };
+const PROFILE_KEY = 'studyQuestProfiles';
+function loadProfiles() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(PROFILE_KEY));
+    if (saved?.profiles?.length) return saved;
+  } catch { /* Start with a fresh profile if saved data is invalid. */ }
+  let hero = starterHero;
+  try {
+    const previous = JSON.parse(localStorage.getItem('studyQuestCompanion'));
+    if (previous) hero = { ...starterHero, ...previous, skills: { ...starterHero.skills, ...previous.skills } };
+  } catch { /* No previous player to import. */ }
+  return { activeId: 'first-player', profiles: [{ id: 'first-player', playerName: 'Player 1', hero }] };
+}
 
 // The hero's level and appearance grow from XP earned across quests.
 function Hero({ hero, compact = false }) {
@@ -82,13 +95,24 @@ function App() {
   const [hintUsed, setHintUsed] = useState(false);
   const [hintsLeft, setHintsLeft] = useState(2);
   const [readingChoice, setReadingChoice] = useState(null);
-  const [hero, setHero] = useState(() => {
-    try { return { ...starterHero, ...JSON.parse(localStorage.getItem('studyQuestCompanion')) }; }
-    catch { return starterHero; }
-  });
-
-  // Save permanent character progress after every change.
-  useEffect(() => { localStorage.setItem('studyQuestCompanion', JSON.stringify(hero)); }, [hero]);
+  const [profileData, setProfileData] = useState(loadProfiles);
+  const [newPlayerName, setNewPlayerName] = useState('');
+  const activeProfile = profileData.profiles.find((profile) => profile.id === profileData.activeId) || profileData.profiles[0];
+  const hero = activeProfile.hero;
+  function setHero(update) {
+    setProfileData((data) => ({ ...data, profiles: data.profiles.map((profile) => profile.id === data.activeId
+      ? { ...profile, hero: typeof update === 'function' ? update(profile.hero) : update }
+      : profile) }));
+  }
+  function addPlayer(event) {
+    event.preventDefault();
+    const name = newPlayerName.trim();
+    if (!name) return;
+    const id = crypto.randomUUID();
+    setProfileData((data) => ({ activeId: id, profiles: [...data.profiles, { id, playerName: name, hero: { ...starterHero, skills: { ...starterHero.skills } } }] }));
+    setNewPlayerName('');
+  }
+  useEffect(() => { localStorage.setItem(PROFILE_KEY, JSON.stringify(profileData)); }, [profileData]);
 
   // Reset progress so a new quest starts with full hearts and fresh hints.
   function start(nextMode) {
@@ -158,6 +182,10 @@ function App() {
       </header>
 
       {screen === 'home' && <main className="home">
+        <section className="player-banner" aria-label="Player and companion">
+          <div className="player-banner-main"><span className="section-kicker">WELCOME BACK, {activeProfile.playerName.toUpperCase()}</span><Hero hero={hero}/></div>
+          <div className="player-controls"><label htmlFor="player-select">Saved player</label><select id="player-select" value={profileData.activeId} onChange={(event) => setProfileData((data) => ({ ...data, activeId: event.target.value }))}>{profileData.profiles.map((profile) => <option key={profile.id} value={profile.id}>{profile.playerName}</option>)}</select><form onSubmit={addPlayer}><label htmlFor="new-player">New player</label><div><input id="new-player" value={newPlayerName} maxLength="24" onChange={(event) => setNewPlayerName(event.target.value)} placeholder="Enter a name"/><button type="submit">Add player</button></div></form><small>Progress is saved for each player on this browser.</small></div>
+        </section>
         <div className="hero-copy">
           <span className="tag">LEARN • PLAY • LEVEL UP</span>
           <h1>Every answer<br />is an <em>adventure.</em></h1>
@@ -166,7 +194,7 @@ function App() {
           <div className="hero-meta"><span>✦ 10 challenges</span><span>♡ 3 hearts</span><span>◉ 2 hints</span></div>
         </div>
         <div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="planet"><span>✦</span></div><div className="float-card card-a">8 + 5 = ?</div><div className="float-card card-b">A B C</div><div className="star star-a">✧</div><div className="star star-b">✦</div><div className="star star-c">✧</div></div>
-        <section className="companion-section"><div><span className="section-kicker">YOUR CHARACTER</span><h2>Meet your quest companion</h2><p>Play challenges to earn XP and train your companion. Reach level 3 to unlock its star crown.</p></div><Hero hero={hero}/><div className="hero-customize"><label htmlFor="hero-name">Name</label><input id="hero-name" maxLength="16" value={hero.name} onChange={(event) => setHero((old) => ({ ...old, name: event.target.value }))} onBlur={() => { if (!hero.name.trim()) setHero((old) => ({ ...old, name: 'Nova' })); }}/><span>Color</span><div className="color-picks">{['violet', 'mint', 'peach'].map((color) => <button key={color} className={`${color} ${hero.color === color ? 'active' : ''}`} onClick={() => setHero((old) => ({ ...old, color }))} aria-label={`Choose ${color} color`} aria-pressed={hero.color === color}/>)}</div></div><div className="skill-grid">{types.map((type) => <div key={type}><span>{icons[type]} {labels[type]}</span><strong>{hero.skills[type]}</strong></div>)}<div><span>✦ Challenges</span><strong>{hero.attempts}</strong></div></div></section>
+        <section className="companion-section"><div><span className="section-kicker">YOUR CHARACTER</span><h2>Make your companion yours</h2><p>Play challenges to earn XP and train your companion. Reach level 3 to unlock its star crown.</p></div><div className="hero-customize"><label htmlFor="hero-name">Companion name</label><input id="hero-name" maxLength="16" value={hero.name} onChange={(event) => setHero((old) => ({ ...old, name: event.target.value }))} onBlur={() => { if (!hero.name.trim()) setHero((old) => ({ ...old, name: 'Nova' })); }}/><span>Color</span><div className="color-picks">{['violet', 'mint', 'peach'].map((color) => <button key={color} className={`${color} ${hero.color === color ? 'active' : ''}`} onClick={() => setHero((old) => ({ ...old, color }))} aria-label={`Choose ${color} color`} aria-pressed={hero.color === color}/>)}</div></div><div className="skill-grid">{types.map((type) => <div key={type}><span>{icons[type]} {labels[type]}</span><strong>{hero.skills[type]}</strong></div>)}<div><span>✦ Challenges</span><strong>{hero.attempts}</strong></div></div></section>
         <section className="choose-section">
           <div><span className="section-kicker">PICK YOUR PATH</span><h2>Choose a challenge</h2></div>
           <div className="mode-grid">
