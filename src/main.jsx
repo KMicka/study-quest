@@ -1,8 +1,8 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import './style.css';
 
-const TOTAL = 10;
+const TOTAL = 10; // Each quest has at most ten challenges.
 const pick = (items) => items[Math.floor(Math.random() * items.length)];
 const shuffle = (items) => [...items].sort(() => Math.random() - 0.5);
 
@@ -24,19 +24,20 @@ const wordSets = [
   { sentence: 'A triangle has ____ sides.', answer: 'three', choices: ['three', 'five', 'seven'] },
 ];
 
+// Build a fresh challenge whenever the player moves to the next step.
 function makeQuestion(type) {
   if (type === 'math') {
     const operation = pick(['+', '−', '×']);
     let a = Math.ceil(Math.random() * (operation === '×' ? 9 : 18));
     let b = Math.ceil(Math.random() * (operation === '×' ? 9 : 12));
     if (operation === '−' && b > a) [a, b] = [b, a];
-    const answer = operation === '+' ? a + b : operation === '−' ? a - b : a * b;
+    const answer = operation === '+' ? a + b : operation === '−' ? a - b : a * b; // Keep the correct result for checking typed input.
     const options = new Set([answer]);
     while (options.size < 4) {
       const candidate = answer + pick([-5, -4, -3, -2, -1, 1, 2, 3, 4, 5]);
       if (candidate >= 0) options.add(candidate);
     }
-    return { type, eyebrow: 'NUMBER LAB', prompt: `${a} ${operation} ${b} = ?`, choices: shuffle([...options]), answer };
+    return { type, eyebrow: 'NUMBER LAB', prompt: `${a} ${operation} ${b} = ?`, choices: shuffle([...options]), answer, hint: operation === '×' ? `Think of ${a} groups of ${b}.` : operation === '−' ? `Start at ${a} and count back ${b}.` : `Start at ${a} and count forward ${b}.` };
   }
   if (type === 'reading') {
     const item = pick(reading);
@@ -49,8 +50,24 @@ function makeQuestion(type) {
 const types = ['math', 'reading', 'words'];
 const labels = { math: 'Math', reading: 'Reading', words: 'Words' };
 const icons = { math: '✦', reading: '◈', words: '✿' };
+const starterHero = { name: 'Nova', color: 'violet', xp: 0, attempts: 0, wins: 0, skills: { math: 0, reading: 0, words: 0 } };
+
+// The hero's level and appearance grow from XP earned across quests.
+function Hero({ hero, compact = false }) {
+  const level = Math.floor(hero.xp / 50) + 1;
+  return <div className={`hero-profile ${compact ? 'compact' : ''}`}>
+    <div className={`hero-creature ${hero.color} ${level >= 3 ? 'evolved' : ''}`} aria-label={`${hero.name}, level ${level}`}>
+      {level >= 3 && <span className="hero-crown">✦</span>}
+      <span className="hero-ear left"/><span className="hero-ear right"/>
+      <span className="hero-eye left"/><span className="hero-eye right"/>
+      <span className="hero-mouth">ᴗ</span>
+    </div>
+    <div className="hero-info"><small>YOUR QUEST COMPANION</small><strong>{hero.name} <span>Lv. {level}</span></strong><div className="xp-track"><span style={{ width: `${(hero.xp % 50) * 2}%` }}/></div><p>{hero.xp % 50}/50 XP to next level</p></div>
+  </div>;
+}
 
 function App() {
+  // React state stores everything the player can change during a quest.
   const [screen, setScreen] = useState('home');
   const [mode, setMode] = useState('mix');
   const [question, setQuestion] = useState(null);
@@ -60,7 +77,20 @@ function App() {
   const [streak, setStreak] = useState(0);
   const [selected, setSelected] = useState(null);
   const [history, setHistory] = useState([]);
+  const [mathInput, setMathInput] = useState('');
+  const [wordChoice, setWordChoice] = useState(null);
+  const [hintUsed, setHintUsed] = useState(false);
+  const [hintsLeft, setHintsLeft] = useState(2);
+  const [readingChoice, setReadingChoice] = useState(null);
+  const [hero, setHero] = useState(() => {
+    try { return { ...starterHero, ...JSON.parse(localStorage.getItem('studyQuestCompanion')) }; }
+    catch { return starterHero; }
+  });
 
+  // Save permanent character progress after every change.
+  useEffect(() => { localStorage.setItem('studyQuestCompanion', JSON.stringify(hero)); }, [hero]);
+
+  // Reset progress so a new quest starts with full hearts and fresh hints.
   function start(nextMode) {
     setMode(nextMode);
     setRound(1);
@@ -69,15 +99,23 @@ function App() {
     setStreak(0);
     setSelected(null);
     setHistory([]);
+    setMathInput('');
+    setWordChoice(null);
+    setHintUsed(false);
+    setHintsLeft(2);
+    setReadingChoice(null);
     setQuestion(makeQuestion(nextMode === 'mix' ? pick(types) : nextMode));
     setScreen('game');
   }
 
+  // Check an answer once, then update points, streak, hearts, and the map.
   function answer(choice) {
     if (selected !== null) return;
-    const correct = choice === question.answer;
+    const correct = String(choice).trim().toLowerCase() === String(question.answer).toLowerCase();
     setSelected(choice);
     setHistory((old) => [...old, { type: question.type, correct }]);
+    // Every attempt gives XP; correct answers also strengthen the matching skill.
+    setHero((old) => ({ ...old, xp: old.xp + (correct ? 10 : 2), attempts: old.attempts + 1, wins: old.wins + Number(correct), skills: { ...old.skills, [question.type]: old.skills[question.type] + Number(correct) } }));
     if (correct) {
       setScore((old) => old + 10 + Math.min(streak, 4) * 2);
       setStreak((old) => old + 1);
@@ -87,6 +125,7 @@ function App() {
     }
   }
 
+  // Continue to another challenge or show the final result.
   function next() {
     if (round === TOTAL || hearts === 0) {
       setScreen('result');
@@ -95,9 +134,22 @@ function App() {
     setRound((old) => old + 1);
     setQuestion(makeQuestion(mode === 'mix' ? pick(types) : mode));
     setSelected(null);
+    setMathInput('');
+    setWordChoice(null);
+    setHintUsed(false);
+    setReadingChoice(null);
+  }
+
+  // A player may reveal only two hints per quest.
+  function useHint() {
+    if (hintUsed || hintsLeft === 0 || selected !== null) return;
+    setHintUsed(true);
+    setHintsLeft((old) => old - 1);
   }
 
   const correctCount = history.filter((item) => item.correct).length;
+  // Odd challenges use the original multiple-choice style; even ones use hands-on input.
+  const handsOn = round % 2 === 0;
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -111,9 +163,10 @@ function App() {
           <h1>Every answer<br />is an <em>adventure.</em></h1>
           <p>Explore bite-sized challenges in math, reading, and words. Collect points, build a streak, and see how far you can go!</p>
           <button className="primary" onClick={() => start('mix')}>Start a quest <span>↗</span></button>
-          <div className="hero-meta"><span>✦ 10 quick questions</span><span>♡ 3 hearts</span><span>◉ Instant feedback</span></div>
+          <div className="hero-meta"><span>✦ 10 challenges</span><span>♡ 3 hearts</span><span>◉ 2 hints</span></div>
         </div>
         <div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="planet"><span>✦</span></div><div className="float-card card-a">8 + 5 = ?</div><div className="float-card card-b">A B C</div><div className="star star-a">✧</div><div className="star star-b">✦</div><div className="star star-c">✧</div></div>
+        <section className="companion-section"><div><span className="section-kicker">YOUR CHARACTER</span><h2>Meet your quest companion</h2><p>Play challenges to earn XP and train your companion. Reach level 3 to unlock its star crown.</p></div><Hero hero={hero}/><div className="hero-customize"><label htmlFor="hero-name">Name</label><input id="hero-name" maxLength="16" value={hero.name} onChange={(event) => setHero((old) => ({ ...old, name: event.target.value }))} onBlur={() => { if (!hero.name.trim()) setHero((old) => ({ ...old, name: 'Nova' })); }}/><span>Color</span><div className="color-picks">{['violet', 'mint', 'peach'].map((color) => <button key={color} className={`${color} ${hero.color === color ? 'active' : ''}`} onClick={() => setHero((old) => ({ ...old, color }))} aria-label={`Choose ${color} color`} aria-pressed={hero.color === color}/>)}</div></div><div className="skill-grid">{types.map((type) => <div key={type}><span>{icons[type]} {labels[type]}</span><strong>{hero.skills[type]}</strong></div>)}<div><span>✦ Challenges</span><strong>{hero.attempts}</strong></div></div></section>
         <section className="choose-section">
           <div><span className="section-kicker">PICK YOUR PATH</span><h2>Choose a challenge</h2></div>
           <div className="mode-grid">
@@ -126,12 +179,20 @@ function App() {
 
       {screen === 'game' && question && <main className="game-wrap">
         <div className="game-top"><button className="text-button" onClick={() => setScreen('home')}>← Exit quest</button><span>{mode === 'mix' ? 'Mixed Quest' : labels[mode] + ' Quest'}</span></div>
+        <Hero hero={hero} compact/>
         <div className="stats"><div><small>QUESTION</small><strong>{round}<span> / {TOTAL}</span></strong></div><div><small>POINTS</small><strong>{score}</strong></div><div><small>STREAK</small><strong>⚡ {streak}</strong></div><div><small>HEARTS</small><strong className="hearts">{'♥'.repeat(hearts)}<span>{'♡'.repeat(3 - hearts)}</span></strong></div></div>
-        <div className="progress" aria-label={`Question ${round} of ${TOTAL}`}><div style={{ width: `${(round / TOTAL) * 100}%` }} /></div>
-        <section className="question-card"><div className={`question-icon ${question.type}`}>{icons[question.type]}</div><span className="section-kicker">{question.eyebrow}</span><h1>{question.type === 'words' ? <>Choose the missing word</> : question.type === 'reading' ? 'Read & decide' : 'Solve the problem'}</h1>{question.passage && <p className="passage">{question.passage}</p>}<div className="prompt">{question.prompt}</div><div className={`choices ${question.choices.length === 2 ? 'two' : ''}`}>{question.choices.map((choice) => <button key={choice} disabled={selected !== null} className={`choice ${selected !== null && choice === question.answer ? 'correct' : ''} ${selected === choice && choice !== question.answer ? 'incorrect' : ''}`} onClick={() => answer(choice)}>{choice}{selected !== null && choice === question.answer && <span>✓</span>}{selected === choice && choice !== question.answer && <span>×</span>}</button>)}</div>{selected !== null && <div className={`feedback ${selected === question.answer ? 'good' : 'bad'}`}><div><strong>{selected === question.answer ? 'Brilliant work!' : 'Keep going!'}</strong><p>{selected === question.answer ? 'You earned points for that answer.' : `The right answer is ${question.answer}.`}</p></div><button onClick={next}>{round === TOTAL || hearts === 0 ? 'See results' : 'Next question'} →</button></div>}</section>
+        <div className="quest-map" aria-label="Quest progress">{Array.from({ length: TOTAL }, (_, i) => <div key={i} className={`map-node ${i < history.length ? history[i].correct ? 'won' : 'lost' : i === round - 1 ? 'current' : ''}`}><span>{i < history.length ? history[i].correct ? '★' : '×' : i + 1}</span></div>)}</div>
+        <section className="question-card"><div className="question-head"><div className={`question-icon ${question.type}`}>{icons[question.type]}</div><button className="hint-button" onClick={useHint} disabled={hintUsed || hintsLeft === 0 || selected !== null}>✧ Hint ({hintsLeft})</button></div><span className="section-kicker">{question.eyebrow} · CHALLENGE {round} · {handsOn ? 'HANDS-ON' : 'QUICK PICK'}</span><h1>{question.type === 'words' ? handsOn ? 'Place the missing word' : 'Choose the missing word' : question.type === 'reading' ? 'Read & decide' : 'Solve the problem'}</h1>{question.passage && <p className="passage">{question.passage}</p>}{question.type === 'reading' && <p className="instruction">Is this statement true? Choose Yes or No.</p>}<div className="prompt">{question.type === 'words' && handsOn ? question.prompt.replace('____', wordChoice || '____') : question.prompt}</div>
+        {hintUsed && <p className="hint-text">✧ {question.type === 'math' ? question.hint : question.type === 'reading' ? 'Look for details in the story that support or contradict the statement.' : 'One word does not belong: ' + question.choices.find((item) => item !== question.answer) + '.'}</p>}
+        {question.type === 'math' && handsOn && <form className="math-answer" onSubmit={(event) => { event.preventDefault(); if (mathInput !== '') answer(mathInput); }}><label htmlFor="math-input">Type your answer</label><div><input id="math-input" type="number" min="0" value={mathInput} onChange={(event) => setMathInput(event.target.value)} disabled={selected !== null} autoFocus placeholder="?" /><button disabled={mathInput === '' || selected !== null}>Check answer →</button></div></form>}
+        {/* Reading hands-on lets the player choose first, then check; quick pick checks immediately. */}
+        {(!handsOn || question.type === 'reading') && <div className={`choices ${question.choices.length === 2 ? 'two' : ''}`}>{question.choices.map((choice) => <button key={choice} disabled={selected !== null} className={`choice ${selected !== null && choice === question.answer ? 'correct' : ''} ${selected === choice && choice !== question.answer ? 'incorrect' : ''} ${handsOn && question.type === 'reading' && readingChoice === choice ? 'picked' : ''}`} onClick={() => handsOn && question.type === 'reading' ? setReadingChoice(choice) : answer(choice)}>{choice}{selected !== null && choice === question.answer && <span>✓</span>}{selected === choice && choice !== question.answer && <span>×</span>}</button>)}</div>}
+        {question.type === 'reading' && handsOn && <button className="check-word reading-check" disabled={!readingChoice || selected !== null} onClick={() => answer(readingChoice)}>Check answer →</button>}
+        {question.type === 'words' && handsOn && <><p className="instruction">Tap a word to place it in the sentence.</p><div className="word-bank">{question.choices.map((choice) => <button key={choice} disabled={selected !== null} className={`word-tile ${wordChoice === choice ? 'placed' : ''}`} onClick={() => setWordChoice(choice)}>{choice}</button>)}</div><button className="check-word" disabled={!wordChoice || selected !== null} onClick={() => answer(wordChoice)}>Check word →</button></>}
+        {selected !== null && <div className={`feedback ${String(selected).toLowerCase() === String(question.answer).toLowerCase() ? 'good' : 'bad'}`}><div><strong>{String(selected).toLowerCase() === String(question.answer).toLowerCase() ? 'Brilliant work!' : 'Keep going!'}</strong><p>{String(selected).toLowerCase() === String(question.answer).toLowerCase() ? `+${10 + Math.min(streak - 1, 4) * 2} points! Your quest grows stronger.` : `The right answer is ${question.answer}.`}</p></div><button onClick={next}>{round === TOTAL || hearts === 0 ? 'See results' : 'Next challenge'} →</button></div>}</section>
       </main>}
 
-      {screen === 'result' && <main className="result-wrap"><div className="result-glow">✦</div><span className="tag">QUEST COMPLETE</span><h1>{correctCount >= 8 ? 'Amazing work!' : correctCount >= 5 ? 'Nice progress!' : 'Every step counts!'}</h1><p>You answered {correctCount} out of {history.length} questions correctly. Ready to go again?</p><div className="result-stats"><div><small>FINAL SCORE</small><strong>{score}</strong></div><div><small>CORRECT</small><strong>{correctCount}/{history.length}</strong></div><div><small>RANK</small><strong>{correctCount >= 8 ? 'Star Scholar' : correctCount >= 5 ? 'Explorer' : 'Rising Learner'}</strong></div></div><div className="result-actions"><button className="primary" onClick={() => start(mode)}>Play again ↗</button><button className="secondary" onClick={() => setScreen('home')}>Choose another path</button></div></main>}
+      {screen === 'result' && <main className="result-wrap"><div className="result-glow">✦</div><span className="tag">QUEST COMPLETE</span><h1>{correctCount >= 8 ? 'Amazing work!' : correctCount >= 5 ? 'Nice progress!' : 'Every step counts!'}</h1><p>You answered {correctCount} out of {history.length} questions correctly. {hero.name} earned {correctCount * 10 + (history.length - correctCount) * 2} XP this quest!</p><Hero hero={hero}/><div className="result-stats"><div><small>FINAL SCORE</small><strong>{score}</strong></div><div><small>CORRECT</small><strong>{correctCount}/{history.length}</strong></div><div><small>RANK</small><strong>{correctCount >= 8 ? 'Star Scholar' : correctCount >= 5 ? 'Explorer' : 'Rising Learner'}</strong></div></div><div className="result-actions"><button className="primary" onClick={() => start(mode)}>Play again ↗</button><button className="secondary" onClick={() => setScreen('home')}>Choose another path</button></div></main>}
       <footer>Made for curious minds ✦</footer>
     </div>
   );
