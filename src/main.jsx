@@ -4,7 +4,14 @@ import './style.css';
 
 const TOTAL = 10; // Each quest has at most ten challenges.
 const pick = (items) => items[Math.floor(Math.random() * items.length)];
-const shuffle = (items) => [...items].sort(() => Math.random() - 0.5);
+const shuffle = (items) => {
+  const result = [...items];
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [result[i], result[j]] = [result[j], result[i]];
+  }
+  return result;
+};
 
 const reading = [
   { passage: 'Maya packed an umbrella because dark clouds covered the sky. On her walk home, rain began to fall.', statement: 'Maya expected it might rain.', answer: 'Yes' },
@@ -69,13 +76,13 @@ function loadProfiles() {
 function Hero({ hero, compact = false }) {
   const level = Math.floor(hero.xp / 50) + 1;
   return <div className={`hero-profile ${compact ? 'compact' : ''}`}>
-    <div className={`hero-creature ${hero.color} ${level >= 3 ? 'evolved' : ''}`} aria-label={`${hero.name}, level ${level}`}>
+    <div className={`hero-creature ${hero.color} ${hero.shape || 'sprite'} ${level >= 3 ? 'evolved' : ''}`} aria-label={`${hero.name}, level ${level}`}>
       {level >= 3 && <span className="hero-crown">✦</span>}
       <span className="hero-ear left"/><span className="hero-ear right"/>
       <span className="hero-eye left"/><span className="hero-eye right"/>
       <span className="hero-mouth">ᴗ</span>
     </div>
-    <div className="hero-info"><small>YOUR QUEST COMPANION</small><strong>{hero.name} <span>Lv. {level}</span></strong><div className="xp-track"><span style={{ width: `${(hero.xp % 50) * 2}%` }}/></div><p>{hero.xp % 50}/50 XP to next level</p></div>
+    <div className="hero-info"><small>YOUR QUEST AVATAR</small><strong>{hero.name} <span>Lv. {level}</span></strong><div className="xp-track"><span style={{ width: `${(hero.xp % 50) * 2}%` }}/></div><p>{hero.xp % 50}/50 XP to next level</p></div>
   </div>;
 }
 
@@ -97,6 +104,9 @@ function App() {
   const [readingChoice, setReadingChoice] = useState(null);
   const [profileData, setProfileData] = useState(loadProfiles);
   const [newPlayerName, setNewPlayerName] = useState('');
+  const [shield, setShield] = useState(false);
+  const [rewardMessage, setRewardMessage] = useState('');
+  const [saveError, setSaveError] = useState(false);
   const activeProfile = profileData.profiles.find((profile) => profile.id === profileData.activeId) || profileData.profiles[0];
   const hero = activeProfile.hero;
   function setHero(update) {
@@ -112,7 +122,10 @@ function App() {
     setProfileData((data) => ({ activeId: id, profiles: [...data.profiles, { id, playerName: name, hero: { ...starterHero, skills: { ...starterHero.skills } } }] }));
     setNewPlayerName('');
   }
-  useEffect(() => { localStorage.setItem(PROFILE_KEY, JSON.stringify(profileData)); }, [profileData]);
+  useEffect(() => {
+    try { localStorage.setItem(PROFILE_KEY, JSON.stringify(profileData)); setSaveError(false); }
+    catch { setSaveError(true); }
+  }, [profileData]);
 
   // Reset progress so a new quest starts with full hearts and fresh hints.
   function start(nextMode) {
@@ -126,7 +139,9 @@ function App() {
     setMathInput('');
     setWordChoice(null);
     setHintUsed(false);
-    setHintsLeft(2);
+    setHintsLeft(hero.xp >= 100 ? 4 : 2);
+    setShield(hero.xp >= 100);
+    setRewardMessage('');
     setReadingChoice(null);
     setQuestion(makeQuestion(nextMode === 'mix' ? pick(types) : nextMode));
     setScreen('game');
@@ -136,6 +151,13 @@ function App() {
   function answer(choice) {
     if (selected !== null) return;
     const correct = String(choice).trim().toLowerCase() === String(question.answer).toLowerCase();
+    const earnedXp = correct ? 10 : 2;
+    const unlocked = hero.xp < 100 && hero.xp + earnedXp >= 100;
+    setRewardMessage(unlocked ? 'Level 3 unlocked! Star crown equipped, +2 hints, and a heart shield. Your rewards are active now!' : `+${earnedXp} XP saved to your avatar`);
+    if (unlocked) {
+      setHintsLeft((old) => old + 2);
+      setShield(true);
+    }
     setSelected(choice);
     setHistory((old) => [...old, { type: question.type, correct }]);
     // Every attempt gives XP; correct answers also strengthen the matching skill.
@@ -144,7 +166,10 @@ function App() {
       setScore((old) => old + 10 + Math.min(streak, 4) * 2);
       setStreak((old) => old + 1);
     } else {
-      setHearts((old) => old - 1);
+      if (shield || unlocked) {
+        setShield(false);
+        setRewardMessage((old) => old + ' • Shield used: your heart is protected!');
+      } else setHearts((old) => old - 1);
       setStreak(0);
     }
   }
@@ -191,10 +216,11 @@ function App() {
           <h1>Every answer<br />is an <em>adventure.</em></h1>
           <p>Explore bite-sized challenges in math, reading, and words. Collect points, build a streak, and see how far you can go!</p>
           <button className="primary" onClick={() => start('mix')}>Start a quest <span>↗</span></button>
-          <div className="hero-meta"><span>✦ 10 challenges</span><span>♡ 3 hearts</span><span>◉ 2 hints</span></div>
+          <div className="hero-meta"><span>✦ 10 challenges</span><span>♡ 3 hearts</span><span>◉ {hero.xp >= 100 ? 4 : 2} hints</span></div>
         </div>
         <div className="hero-art" aria-hidden="true"><div className="orbit orbit-one"/><div className="orbit orbit-two"/><div className="planet"><span>✦</span></div><div className="float-card card-a">8 + 5 = ?</div><div className="float-card card-b">A B C</div><div className="star star-a">✧</div><div className="star star-b">✦</div><div className="star star-c">✧</div></div>
-        <section className="companion-section"><div><span className="section-kicker">YOUR CHARACTER</span><h2>Make your companion yours</h2><p>Play challenges to earn XP and train your companion. Reach level 3 to unlock its star crown.</p></div><div className="hero-customize"><label htmlFor="hero-name">Companion name</label><input id="hero-name" maxLength="16" value={hero.name} onChange={(event) => setHero((old) => ({ ...old, name: event.target.value }))} onBlur={() => { if (!hero.name.trim()) setHero((old) => ({ ...old, name: 'Nova' })); }}/><span>Color</span><div className="color-picks">{['violet', 'mint', 'peach'].map((color) => <button key={color} className={`${color} ${hero.color === color ? 'active' : ''}`} onClick={() => setHero((old) => ({ ...old, color }))} aria-label={`Choose ${color} color`} aria-pressed={hero.color === color}/>)}</div></div><div className="skill-grid">{types.map((type) => <div key={type}><span>{icons[type]} {labels[type]}</span><strong>{hero.skills[type]}</strong></div>)}<div><span>✦ Challenges</span><strong>{hero.attempts}</strong></div></div></section>
+        <section className="companion-section"><div><span className="section-kicker">YOUR CHARACTER</span><h2>Create your own avatar</h2><p>Choose a name, color, and form. Earn 10 XP for a correct answer and 2 XP for practice. Your avatar levels up every 50 XP.</p></div><div className="hero-customize"><label htmlFor="hero-name">Avatar name</label><input id="hero-name" maxLength="16" value={hero.name} onChange={(event) => setHero((old) => ({ ...old, name: event.target.value }))} onBlur={() => { if (!hero.name.trim()) setHero((old) => ({ ...old, name: 'Nova' })); }}/><label htmlFor="avatar-shape">Form</label><select id="avatar-shape" value={hero.shape || "sprite"} onChange={(event) => setHero((old) => ({ ...old, shape: event.target.value }))}><option value="sprite">Forest sprite</option><option value="orb">Star orb</option><option value="bot">Study bot</option></select><span>Color</span><div className="color-picks">{['violet', 'mint', 'peach'].map((color) => <button key={color} className={`${color} ${hero.color === color ? 'active' : ''}`} onClick={() => setHero((old) => ({ ...old, color }))} aria-label={`Choose ${color} color`} aria-pressed={hero.color === color}/>)}</div></div><div className="skill-grid">{types.map((type) => <div key={type}><span>{icons[type]} {labels[type]}</span><strong>{hero.skills[type]}</strong></div>)}<div><span>✦ Challenges</span><strong>{hero.attempts}</strong></div></div></section>
+        <section className={`rewards-panel ${hero.xp >= 100 ? 'unlocked' : ''}`} aria-label="Level rewards"><div><span className="section-kicker">{hero.xp >= 100 ? 'LEVEL 3 • UNLOCKED' : 'NEXT MILESTONE • LEVEL 3'}</span><h2>Small steps. Super powers.</h2><p>{hero.xp >= 100 ? 'Your rewards activate in every quest. Keep growing your avatar!' : `${100 - hero.xp} XP to unlock your first rewards. Ten correct answers from a fresh start!`}</p></div><div className="reward-grid"><article><b>✧</b><strong>Extra guidance</strong><span>4 hints per quest instead of 2</span></article><article><b>◇</b><strong>Heart shield</strong><span>Protects your first mistake each quest</span></article><article><b>✦</b><strong>Star crown</strong><span>A glowing upgrade for your avatar</span></article></div></section>
         <section className="choose-section">
           <div><span className="section-kicker">PICK YOUR PATH</span><h2>Choose a challenge</h2></div>
           <div className="mode-grid">
@@ -207,7 +233,7 @@ function App() {
 
       {screen === 'game' && question && <main className="game-wrap">
         <div className="game-top"><button className="text-button" onClick={() => setScreen('home')}>← Exit quest</button><span>{mode === 'mix' ? 'Mixed Quest' : labels[mode] + ' Quest'}</span></div>
-        <Hero hero={hero} compact/>
+        <Hero hero={hero} compact/><div className="perk-status">{hero.xp >= 100 ? `✦ Level 3 perks active · ${shield ? "◇ Shield ready" : "Shield used"}` : `✧ ${100 - hero.xp} XP until level 3 rewards`}</div>
         <div className="stats"><div><small>QUESTION</small><strong>{round}<span> / {TOTAL}</span></strong></div><div><small>POINTS</small><strong>{score}</strong></div><div><small>STREAK</small><strong>⚡ {streak}</strong></div><div><small>HEARTS</small><strong className="hearts">{'♥'.repeat(hearts)}<span>{'♡'.repeat(3 - hearts)}</span></strong></div></div>
         <div className="quest-map" aria-label="Quest progress">{Array.from({ length: TOTAL }, (_, i) => <div key={i} className={`map-node ${i < history.length ? history[i].correct ? 'won' : 'lost' : i === round - 1 ? 'current' : ''}`}><span>{i < history.length ? history[i].correct ? '★' : '×' : i + 1}</span></div>)}</div>
         <section className="question-card"><div className="question-head"><div className={`question-icon ${question.type}`}>{icons[question.type]}</div><button className="hint-button" onClick={useHint} disabled={hintUsed || hintsLeft === 0 || selected !== null}>✧ Hint ({hintsLeft})</button></div><span className="section-kicker">{question.eyebrow} · CHALLENGE {round} · {handsOn ? 'HANDS-ON' : 'QUICK PICK'}</span><h1>{question.type === 'words' ? handsOn ? 'Place the missing word' : 'Choose the missing word' : question.type === 'reading' ? 'Read & decide' : 'Solve the problem'}</h1>{question.passage && <p className="passage">{question.passage}</p>}{question.type === 'reading' && <p className="instruction">Is this statement true? Choose Yes or No.</p>}<div className="prompt">{question.type === 'words' && handsOn ? question.prompt.replace('____', wordChoice || '____') : question.prompt}</div>
@@ -217,11 +243,12 @@ function App() {
         {(!handsOn || question.type === 'reading') && <div className={`choices ${question.choices.length === 2 ? 'two' : ''}`}>{question.choices.map((choice) => <button key={choice} disabled={selected !== null} className={`choice ${selected !== null && choice === question.answer ? 'correct' : ''} ${selected === choice && choice !== question.answer ? 'incorrect' : ''} ${handsOn && question.type === 'reading' && readingChoice === choice ? 'picked' : ''}`} onClick={() => handsOn && question.type === 'reading' ? setReadingChoice(choice) : answer(choice)}>{choice}{selected !== null && choice === question.answer && <span>✓</span>}{selected === choice && choice !== question.answer && <span>×</span>}</button>)}</div>}
         {question.type === 'reading' && handsOn && <button className="check-word reading-check" disabled={!readingChoice || selected !== null} onClick={() => answer(readingChoice)}>Check answer →</button>}
         {question.type === 'words' && handsOn && <><p className="instruction">Tap a word to place it in the sentence.</p><div className="word-bank">{question.choices.map((choice) => <button key={choice} disabled={selected !== null} className={`word-tile ${wordChoice === choice ? 'placed' : ''}`} onClick={() => setWordChoice(choice)}>{choice}</button>)}</div><button className="check-word" disabled={!wordChoice || selected !== null} onClick={() => answer(wordChoice)}>Check word →</button></>}
+        {selected !== null && <p className="xp-notice" role="status">{rewardMessage}</p>}
         {selected !== null && <div className={`feedback ${String(selected).toLowerCase() === String(question.answer).toLowerCase() ? 'good' : 'bad'}`}><div><strong>{String(selected).toLowerCase() === String(question.answer).toLowerCase() ? 'Brilliant work!' : 'Keep going!'}</strong><p>{String(selected).toLowerCase() === String(question.answer).toLowerCase() ? `+${10 + Math.min(streak - 1, 4) * 2} points! Your quest grows stronger.` : `The right answer is ${question.answer}.`}</p></div><button onClick={next}>{round === TOTAL || hearts === 0 ? 'See results' : 'Next challenge'} →</button></div>}</section>
       </main>}
 
       {screen === 'result' && <main className="result-wrap"><div className="result-glow">✦</div><span className="tag">QUEST COMPLETE</span><h1>{correctCount >= 8 ? 'Amazing work!' : correctCount >= 5 ? 'Nice progress!' : 'Every step counts!'}</h1><p>You answered {correctCount} out of {history.length} questions correctly. {hero.name} earned {correctCount * 10 + (history.length - correctCount) * 2} XP this quest!</p><Hero hero={hero}/><div className="result-stats"><div><small>FINAL SCORE</small><strong>{score}</strong></div><div><small>CORRECT</small><strong>{correctCount}/{history.length}</strong></div><div><small>RANK</small><strong>{correctCount >= 8 ? 'Star Scholar' : correctCount >= 5 ? 'Explorer' : 'Rising Learner'}</strong></div></div><div className="result-actions"><button className="primary" onClick={() => start(mode)}>Play again ↗</button><button className="secondary" onClick={() => setScreen('home')}>Choose another path</button></div></main>}
-      <footer>Made for curious minds ✦</footer>
+      <footer>{saveError ? "Progress could not be saved. Allow browser storage to keep your avatar." : "Avatar and XP saved automatically on this browser • Made for curious minds ✦"}</footer>
     </div>
   );
 }
